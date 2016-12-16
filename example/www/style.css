@@ -1,0 +1,30 @@
+@font-face {
+    font-family: 'ambleregular';
+    src: url('font/Amble-Regular-webfont.eot');
+    src: url('font/Amble-Regular-webfont.eot?#iefix') format('embedded-opentype'),
+         url('font/Amble-Regular-webfont.woff') format('woff'),
+         url('font/Amble-Regular-webfont.ttf') format('truetype'),
+         url('font/Amble-Regular-webfont.svg#ambleregular') format('svg');
+    font-weight: normal;
+    font-style: normal;
+}
+
+body {
+	font-family: "ambleregular";
+	margin:0;
+}
+
+#header {
+	text-align: center;
+}
+
+h1 {
+	margin:0;
+	padding:4em 0;
+	color:white;
+}
+
+#content {
+	width:40em;
+	margin:0 auto;
+}
