@@ -63,20 +63,31 @@ pusher := push.New()
 
 ### ResponseWriter
 ``` go
-pushWriter, err := pusher.ResponseWriter(w, r)
-if err == nil {
-	defer pushWriter.Close()
-	w = pushWriter
+http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	if pushWriter, err := pusher.ResponseWriter(w, r); err == nil {
+		defer pushWriter.Close()
+		w = pushWriter
+	}
+
+	// ...
 }
 ```
 
 ### Reader
 ``` go
-r = pusher.Reader(r, reqURL, mimetype, uris)
+func openIndex() io.Reader {
+	r, _ := os.Open("index.html")
+
+	r = pusher.Reader(r, "/index.html", "text/html", func(uri string) error {
+		fmt.Println(uri)
+		return nil
+	})
+	return r
+}
 ```
 
 ## Example
-See [example]().
+See [example](https://github.com/tdewolff/push/tree/master/example), it shows how a 1.6s (http) can be reduced to 0.4s (https).
 
 ## License
 Released under the [MIT license](LICENSE.md).

@@ -7,6 +7,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"sync"
 
@@ -82,16 +83,12 @@ func (p *Push) ResponseWriter(w http.ResponseWriter, r *http.Request) (*pipedRes
 		return nil, ErrRecursivePush
 	}
 
-	uri := r.Host + r.RequestURI
-	reqURL, err := URIToURL(uri)
+	reqURL, err := HostAndURIToURL(r.Host, r.RequestURI)
 	if err != nil {
 		return nil, err
 	}
-	mimetype, err := URIToMimetype(uri)
-	if err != nil {
-		return nil, err
-	}
-	if mimetype != "text/html" && mimetype != "text/css" && mimetype != "image/svg+xml" {
+	mimetype, err := URIToMimetype(r.RequestURI)
+	if err != nil || mimetype != "text/html" && mimetype != "text/css" && mimetype != "image/svg+xml" {
 		return nil, ErrNoParser
 	}
 
@@ -110,26 +107,7 @@ func (p *Push) ResponseWriter(w http.ResponseWriter, r *http.Request) (*pipedRes
 	return pipeResponseWriter, nil
 }
 
-// Reader reads from r and returns a reader. Any reads done at the returned reader will concurrently be parsed for resource URIs. Whether a resource is local is determined by reqURL. It accepts only text/html and text/css as mimetypes.
-func (p *Push) Reader(r io.Reader, reqURL *url.URL, mimetype string, uris chan<- string) io.Reader {
-	uriParser := func(uri string) error {
-		uris <- uri
-		return nil
-	}
-
-	pr, pw := io.Pipe()
-	go func() {
-		r = io.TeeReader(r, pw)
-		if err := p.Parse(r, reqURL, mimetype, uriParser); err != nil {
-			pw.CloseWithError(err)
-		} else {
-			pw.Close()
-		}
-	}()
-	return pr
-}
-
-// Push pushes any resource URIs found in r to pusher. Whether a resource is local is determined by reqURL. It accepts only text/html and text/css as mimetypes.
+// Push pushes any resource URIs found in r to pusher. It reads resources recursively. Whether a resource is local is determined by reqURL. It accepts only text/html and text/css as mimetypes.
 func (p *Push) Push(r io.Reader, reqURL *url.URL, mimetype string, pusher http.Pusher, opts *http.PushOptions) ([]string, error) {
 	uris := []string{}
 
@@ -175,8 +153,7 @@ func (p *Push) Push(r io.Reader, reqURL *url.URL, mimetype string, pusher http.P
 					return
 				}
 
-				uri = reqURL.Host + uri
-				resourceReqURL, err := URIToURL(uri)
+				resourceReqURL, err := HostAndURIToURL(reqURL.Host, uri)
 				if err != nil {
 					return
 				}
@@ -202,6 +179,25 @@ func (p *Push) Push(r io.Reader, reqURL *url.URL, mimetype string, pusher http.P
 // URIParser is a callback definition that is called when a resource URI is found.
 type URIParser func(string) error
 
+// Reader reads from r and returns a reader that will send any local resource URI to uriParser. Any reads done at the returned reader will concurrently be parsed for resource URIs. Whether a resource is local is determined by reqURL. It accepts only text/html and text/css as mimetypes.
+func (p *Push) Reader(r io.Reader, url string, mimetype string, uriParser URIParser) io.Reader {
+	reqURL, err := HostAndURIToURL("", url)
+	if err != nil {
+		return r
+	}
+
+	pr, pw := io.Pipe()
+	go func() {
+		r = io.TeeReader(r, pw)
+		if err := p.Parse(r, reqURL, mimetype, uriParser); err != nil {
+			pw.CloseWithError(err)
+		} else {
+			pw.Close()
+		}
+	}()
+	return pr
+}
+
 // Parse parses reads from r and sends any local resource URI to uriParser. Whether a resource is local is determined by reqURL. It accepts only text/html and text/css as mimetypes.
 func (p *Push) Parse(r io.Reader, reqURL *url.URL, mimetype string, uriParser URIParser) error {
 	if mimetype == "text/html" {
@@ -211,7 +207,6 @@ func (p *Push) Parse(r io.Reader, reqURL *url.URL, mimetype string, uriParser UR
 	} else if mimetype == "image/svg+xml" {
 		return p.ParseSVG(r, reqURL, uriParser)
 	}
-	// TODO: SVG
 	return ErrNoParser
 }
 
@@ -391,7 +386,7 @@ func (p *Push) ParseSVG(r io.Reader, reqURL *url.URL, uriParser URIParser) error
 }
 
 func (p *Push) parseURL(rawURI string, reqURL *url.URL, uriParser URIParser) error {
-	uri, err := URIToURL(rawURI)
+	uri, err := HostAndURIToURL("", rawURI)
 	if err != nil {
 		return err
 	}
@@ -409,8 +404,8 @@ func (p *Push) parseURL(rawURI string, reqURL *url.URL, uriParser URIParser) err
 	return nil
 }
 
-func URIToURL(uri string) (*url.URL, error) {
-	reqURL, err := url.Parse(uri)
+func HostAndURIToURL(host, uri string) (*url.URL, error) {
+	reqURL, err := url.Parse(path.Join(host, uri))
 	if err != nil {
 		return nil, err
 	}

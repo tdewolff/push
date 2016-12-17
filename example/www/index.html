@@ -15,18 +15,30 @@
 				background-size: 100% auto;
 			}
 
+			#sidebar-left {
+				float:left;
+				margin:1em;
+				width:800px;
+				height:324px;
+			}
+
+			iframe {
+				width:100%;
+				height:100%;
+			}
+
+			#sidebar-right {
+				float:right;
+				margin:1em;
+				width:600px;
+				height:300px;
+				background-size:auto 100%;
+				background-repeat:no-repeat;
+			}
+
 			#un {
 				display:inline-block;
 				vertical-align:middle;
-			}
-
-			#eu {
-				display:inline-block;
-				width:2em;
-				height:1em;
-				vertical-align:middle;
-				background-size:auto 100%;
-				background-repeat:no-repeat;
 			}
 		</style>
 	</head>
@@ -34,12 +46,10 @@
 		<div id="header">
 			<h1>Push example</h1>
 		</div>
+		<div id="sidebar-left"><iframe src="iframe.html"></iframe></div>
+		<div id="sidebar-right" style="background-image:url(eu_trade.jpg);"></div>
 		<div id="content">
-			<h2>
-				Flag images
-				<span id="un"><svg xmlns="http://www.w3.org/2000/svg" width="32px" height="32px"><image href="un.gif"/></svg></span>
-				<span id="eu" style="background-image:url('eu.png'); "></span>
-			</h2>
+			<h2>Flag images <span id="un"><svg xmlns="http://www.w3.org/2000/svg" width="32px" height="32px"><image href="un.gif"/></svg></span></h2>
 			<p class="flags">
 				<img src="flags/AD.png" srcset="AD_48x48.png 48w, AD_24x24.png 24w" width="96" height="96">
 				<img src="flags/AE.png" width="96" height="96">

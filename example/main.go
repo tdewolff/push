@@ -9,12 +9,10 @@ import (
 )
 
 func main() {
-	//defer profile.Start(profile.CPUProfile, profile.ProfilePath(".")).Stop()
-
 	pusher := push.New("/", "www")
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 
 		if pushWriter, err := pusher.ResponseWriter(w, r); err == nil {
 			defer func() {
@@ -23,7 +21,7 @@ func main() {
 				}
 			}()
 			w = pushWriter
-		} else if err != push.ErrRecursivePush && err != push.ErrNoPusher {
+		} else if err != push.ErrRecursivePush && err != push.ErrNoPusher && err != push.ErrNoParser {
 			log.Print(err)
 		}
 
