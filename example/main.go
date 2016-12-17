@@ -5,12 +5,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/pkg/profile"
 	"github.com/tdewolff/push"
 )
 
 func main() {
-	defer profile.Start(profile.CPUProfile, profile.ProfilePath(".")).Stop()
+	//defer profile.Start(profile.CPUProfile, profile.ProfilePath(".")).Stop()
 
 	pusher := push.New("/", "www")
 
@@ -18,7 +17,11 @@ func main() {
 		time.Sleep(10 * time.Millisecond)
 
 		if pushWriter, err := pusher.ResponseWriter(w, r); err == nil {
-			defer pushWriter.Close()
+			defer func() {
+				if err := pushWriter.Close(); err != nil {
+					log.Print(err)
+				}
+			}()
 			w = pushWriter
 		} else if err != push.ErrRecursivePush && err != push.ErrNoPusher {
 			log.Print(err)

@@ -15,13 +15,18 @@ import (
 ```
 
 ## Parsers
-Extract URIs from:
-
 ### HTML
+Parses
+- `<style>...</style>` as CSS
+- `<x style="...">` as inline CSS
+- `<iframe>...</iframe>` as HTML
+- `<svg>...</svg>` as SVG
+
+Extracts URIs from
 - `<link href="...">`
 - `<script src="...">`
 - `<img src="...">`
-- `<img srcset="...">`
+- `<img srcset="..., ...">`
 - `<object data="...">`
 - `<source src="...">`
 - `<audio src="...">`
@@ -32,9 +37,23 @@ Extract URIs from:
 - `<iframe src="...">`
 
 ### CSS
+Parses
+- `url(data:image/svg+xml,...)` as SVG
+
+Extracts URIs from
 - `url("...")`
 
 ### SVG
+Parses
+- `<style>...</style>` as CSS
+- `<x style="...">` as inline CSS
+
+Extracts URIs from
+- `<script href="..." xlink:href="...">`
+- `<image href="..." xlink:href="...">`
+- `<feImage href="..." xlink:href="...">`
+- `<color-profile href="..." xlink:href="...">`
+- `<use href="..." xlink:href="...">`
 
 ## Usage
 ### New

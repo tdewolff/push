@@ -1,6 +1,7 @@
 package push
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -10,9 +11,12 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/tdewolff/buffer"
 	"github.com/tdewolff/parse"
 	"github.com/tdewolff/parse/css"
 	"github.com/tdewolff/parse/html"
+	"github.com/tdewolff/parse/svg"
+	"github.com/tdewolff/parse/xml"
 )
 
 var ErrNoPusher = errors.New("ResponseWriter is not a Pusher")
@@ -49,8 +53,9 @@ func New(baseURI string, dir http.Dir) *Push {
 // pipedResponseWriter makes sure that all data has been written on calling Close (can be blocking).
 type pipedResponseWriter struct {
 	http.ResponseWriter
-	pw *io.PipeWriter
-	wg sync.WaitGroup
+	pw  *io.PipeWriter
+	wg  sync.WaitGroup
+	err error
 }
 
 func (w *pipedResponseWriter) Write(b []byte) (int, error) {
@@ -58,9 +63,9 @@ func (w *pipedResponseWriter) Write(b []byte) (int, error) {
 }
 
 func (w *pipedResponseWriter) Close() error {
-	err := w.pw.Close()
+	w.pw.Close()
 	w.wg.Wait()
-	return err
+	return w.err
 }
 
 // ResponseWriter wraps a ResponseWriter interface and pushes any resources to the client.
@@ -71,51 +76,39 @@ func (p *Push) ResponseWriter(w http.ResponseWriter, r *http.Request) (*pipedRes
 	if !ok {
 		return nil, ErrNoPusher
 	}
+	opts := &http.PushOptions{Header: http.Header{"X-Pushed": {"1"}}}
 
 	if r.Header.Get("X-Pushed") == "1" {
 		// r.Header.Del("X-Pushed") // data race with read at net/http.(*http2sorter).Keys()
 		return nil, ErrRecursivePush
 	}
 
-	reqURL, err := url.Parse(r.Host + r.RequestURI)
+	uri := r.Host + r.RequestURI
+	reqURL, err := URIToURL(uri)
 	if err != nil {
 		return nil, err
 	}
-
-	mimetype := "text/html"
-	if dot := strings.IndexByte(r.RequestURI, '.'); dot > -1 {
-		mediatype := mime.TypeByExtension(r.RequestURI[dot:])
-		mimetype, _, err = mime.ParseMediaType(mediatype)
-		if err != nil {
-			return nil, err
-		}
+	mimetype, err := URIToMimetype(uri)
+	if err != nil {
+		return nil, err
+	}
+	if mimetype != "text/html" && mimetype != "text/css" && mimetype != "image/svg+xml" {
+		return nil, ErrNoParser
 	}
 
-	opts := &http.PushOptions{Header: http.Header{"X-Pushed": {"1"}}}
-
 	pr, pw := io.Pipe()
-	pipeResponseWriter := &pipedResponseWriter{w, pw, sync.WaitGroup{}}
+	pipeResponseWriter := &pipedResponseWriter{w, pw, sync.WaitGroup{}, nil}
 	pipeResponseWriter.wg.Add(1)
 	go func() {
 		tr := io.TeeReader(pr, w)
 		if _, err = p.Push(tr, reqURL, mimetype, pusher, opts); err != nil {
 			drainReader(tr)
-			pr.CloseWithError(err)
-		} else {
-			pr.Close()
+			pipeResponseWriter.err = err
 		}
+		pr.Close()
 		pipeResponseWriter.wg.Done()
 	}()
 	return pipeResponseWriter, nil
-}
-
-func drainReader(r io.Reader) {
-	b := make([]byte, 1024)
-	for {
-		if _, err := r.Read(b); err != nil {
-			break
-		}
-	}
 }
 
 // Reader reads from r and returns a reader. Any reads done at the returned reader will concurrently be parsed for resource URIs. Whether a resource is local is determined by reqURL. It accepts only text/html and text/css as mimetypes.
@@ -139,56 +132,66 @@ func (p *Push) Reader(r io.Reader, reqURL *url.URL, mimetype string, uris chan<-
 
 // Push pushes any resource URIs found in r to pusher. Whether a resource is local is determined by reqURL. It accepts only text/html and text/css as mimetypes.
 func (p *Push) Push(r io.Reader, reqURL *url.URL, mimetype string, pusher http.Pusher, opts *http.PushOptions) ([]string, error) {
-	wg := sync.WaitGroup{}
-	defer wg.Wait()
-
 	uris := []string{}
-	uriChan := make(chan string, 5)
-	defer close(uriChan)
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for uri := range uriChan {
-			uris = append(uris, uri)
-		}
-	}()
 
 	var uriParser URIParser
-	uriParser = func(uri string) error {
-		pushErr := pusher.Push(uri, opts)
-		uriChan <- uri
+	if p.dir == "" {
+		uriParser = func(uri string) error {
+			pushErr := pusher.Push(uri, opts)
+			uris = append(uris, uri)
+			return pushErr
+		}
+	} else {
+		wg := sync.WaitGroup{}
+		uriChan := make(chan string, 5)
+		wgUriChan := sync.WaitGroup{}
+		defer func() {
+			wg.Wait()
+			close(uriChan)
+			wgUriChan.Wait()
+		}()
+
+		// process all extracted URIs
+		wgUriChan.Add(1)
+		go func() {
+			defer wgUriChan.Done()
+
+			for uri := range uriChan {
+				uris = append(uris, uri)
+			}
+		}()
 
 		// recursively read and parse the referenced URIs
-		if p.dir != "" {
+		uriParser = func(uri string) error {
+			pushErr := pusher.Push(uri, opts)
+			uriChan <- uri
+
+			// do not block current parser
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
+
 				file, err := p.dir.Open(uri)
 				if err != nil {
 					return
 				}
 
-				resourceReqURL, err := url.Parse(reqURL.Host + uri)
+				uri = reqURL.Host + uri
+				resourceReqURL, err := URIToURL(uri)
 				if err != nil {
 					return
 				}
-
-				resourceMimetype := "text/html"
-				if dot := strings.IndexByte(uri, '.'); dot > -1 {
-					mediatype := mime.TypeByExtension(uri[dot:])
-					resourceMimetype, _, err = mime.ParseMediaType(mediatype)
-					if err != nil {
-						return
-					}
+				resourceMimetype, err := URIToMimetype(uri)
+				if err != nil {
+					return
 				}
 
 				if err := p.Parse(file, resourceReqURL, resourceMimetype, uriParser); err != nil {
 					return
 				}
 			}()
+			return pushErr
 		}
-		return pushErr
 	}
 
 	if err := p.Parse(r, reqURL, mimetype, uriParser); err != nil {
@@ -206,6 +209,8 @@ func (p *Push) Parse(r io.Reader, reqURL *url.URL, mimetype string, uriParser UR
 		return p.ParseHTML(r, reqURL, uriParser)
 	} else if mimetype == "text/css" {
 		return p.ParseCSS(r, reqURL, uriParser, false)
+	} else if mimetype == "image/svg+xml" {
+		return p.ParseSVG(r, reqURL, uriParser)
 	}
 	// TODO: SVG
 	return ErrNoParser
@@ -213,9 +218,11 @@ func (p *Push) Parse(r io.Reader, reqURL *url.URL, mimetype string, uriParser UR
 
 // ParseHTML parses r as an HTML file and sends any local resource URI to uriParser. Whether a resource is local is determined by reqURL.
 func (p *Push) ParseHTML(r io.Reader, reqURL *url.URL, uriParser URIParser) error {
+	var tag html.Hash
+
 	lexer := html.NewLexer(r)
 	for {
-		tt, _ := lexer.Next()
+		tt, data := lexer.Next()
 		switch tt {
 		case html.ErrorToken:
 			if lexer.Err() == io.EOF {
@@ -223,22 +230,25 @@ func (p *Push) ParseHTML(r io.Reader, reqURL *url.URL, uriParser URIParser) erro
 			}
 			return lexer.Err()
 		case html.StartTagToken:
-			hash := html.ToHash(lexer.Text())
-			if hash == html.Link || hash == html.Script || hash == html.Img || hash == html.Object || hash == html.Source || hash == html.Audio || hash == html.Video || hash == html.Track || hash == html.Embed || hash == html.Input || hash == html.Iframe {
-				for {
-					attrTokenType, _ := lexer.Next()
-					if attrTokenType != html.AttributeToken {
-						break
+			tag = html.ToHash(lexer.Text())
+			for {
+				attrTokenType, _ := lexer.Next()
+				if attrTokenType != html.AttributeToken {
+					break
+				}
+
+				if attr := html.ToHash(lexer.Text()); attr == html.Style || attr == html.Src || attr == html.Srcset || attr == html.Poster || attr == html.Data || attr == html.Href && tag == html.Link {
+					attrVal := lexer.AttrVal()
+					if len(attrVal) > 1 && (attrVal[0] == '"' || attrVal[0] == '\'') {
+						attrVal = parse.TrimWhitespace(attrVal[1 : len(attrVal)-1])
 					}
-					attrHash := html.ToHash(lexer.Text())
 
-					if attrHash == html.Src || attrHash == html.Srcset || attrHash == html.Poster || attrHash == html.Data || attrHash == html.Href && hash == html.Link {
-						attrVal := lexer.AttrVal()
-						if len(attrVal) > 1 && (attrVal[0] == '"' || attrVal[0] == '\'') {
-							attrVal = parse.TrimWhitespace(attrVal[1 : len(attrVal)-1])
+					if attr == html.Style {
+						if err := p.ParseCSS(buffer.NewReader(attrVal), reqURL, uriParser, true); err != nil {
+							return err
 						}
-
-						if attrHash == html.Srcset {
+					} else {
+						if attr == html.Srcset {
 							// TODO
 							fmt.Println(string(attrVal))
 						} else {
@@ -249,8 +259,22 @@ func (p *Push) ParseHTML(r io.Reader, reqURL *url.URL, uriParser URIParser) erro
 					}
 				}
 			}
-			// TODO: CSS style tag and attribute, SVG
+		case html.SvgToken:
+			if err := p.ParseSVG(buffer.NewReader(data), reqURL, uriParser); err != nil {
+				return err
+			}
+		case html.TextToken:
+			if tag == html.Style {
+				if err := p.ParseCSS(buffer.NewReader(data), reqURL, uriParser, false); err != nil {
+					return err
+				}
+			} else if tag == html.Iframe {
+				if err := p.ParseHTML(buffer.NewReader(data), reqURL, uriParser); err != nil {
+					return err
+				}
+			}
 		}
+		lexer.Free(len(data))
 	}
 }
 
@@ -267,9 +291,22 @@ func (p *Push) ParseCSS(r io.Reader, reqURL *url.URL, uriParser URIParser, isInl
 		} else if gt == css.DeclarationGrammar {
 			vals := parser.Values()
 			for _, val := range vals {
-				if val.TokenType == css.URLToken && len(val.Data) > 7 {
-					url := val.Data[5 : len(val.Data)-2]
-					if err := p.parseURL(string(url), reqURL, uriParser); err != nil {
+				if val.TokenType == css.URLToken && len(val.Data) > 5 {
+					url := val.Data[4 : len(val.Data)-1]
+					if len(url) > 2 && (url[0] == '"' || url[0] == '\'') {
+						url = url[1 : len(url)-1]
+					}
+					if mediatype, data, err := parse.DataURI(url); err == nil {
+						semicolon := bytes.IndexByte(mediatype, ';')
+						if semicolon == -1 {
+							semicolon = len(mediatype)
+						}
+						if mimetype := string(mediatype[:semicolon]); mimetype == "image/svg+xml" {
+							if err := p.ParseSVG(buffer.NewReader(data), reqURL, uriParser); err != nil {
+								return err
+							}
+						}
+					} else if err = p.parseURL(string(url), reqURL, uriParser); err != nil {
 						return err
 					}
 				}
@@ -278,18 +315,109 @@ func (p *Push) ParseCSS(r io.Reader, reqURL *url.URL, uriParser URIParser, isInl
 	}
 }
 
-func (p *Push) parseURL(srcRawURL string, reqURL *url.URL, uriParser URIParser) error {
-	srcURL, err := url.Parse(srcRawURL)
+// ParseSVG parses r as an SVG file and sends any local resource URI to uriParser. Whether a resource is local is determined by reqURL.
+func (p *Push) ParseSVG(r io.Reader, reqURL *url.URL, uriParser URIParser) error {
+	var tag svg.Hash
+
+	lexer := xml.NewLexer(r)
+	for {
+		tt, data := lexer.Next()
+		switch tt {
+		case xml.ErrorToken:
+			if lexer.Err() == io.EOF {
+				return nil
+			}
+			return lexer.Err()
+		case xml.StartTagToken:
+			tag = svg.ToHash(lexer.Text())
+			for {
+				attrTokenType, _ := lexer.Next()
+				if attrTokenType != xml.AttributeToken {
+					break
+				}
+
+				if attr := svg.ToHash(lexer.Text()); attr == svg.Style || (tag == svg.Image || tag == svg.Script || tag == svg.FeImage || tag == svg.Color_Profile || tag == svg.Use) && (attr == svg.Href || parse.Equal(lexer.Text(), []byte("xlink:href"))) {
+					attrVal := lexer.AttrVal()
+					if len(attrVal) > 1 && (attrVal[0] == '"' || attrVal[0] == '\'') {
+						attrVal = parse.ReplaceMultipleWhitespace(parse.TrimWhitespace(attrVal[1 : len(attrVal)-1]))
+					}
+
+					if attr == svg.Style {
+						if err := p.ParseCSS(buffer.NewReader(attrVal), reqURL, uriParser, true); err != nil {
+							return err
+						}
+					} else {
+						if err := p.parseURL(string(attrVal), reqURL, uriParser); err != nil {
+							return err
+						}
+					}
+				}
+			}
+		case xml.TextToken:
+			if tag == svg.Style {
+				if err := p.ParseCSS(buffer.NewReader(data), reqURL, uriParser, false); err != nil {
+					return err
+				}
+			}
+		}
+		lexer.Free(len(data))
+	}
+}
+
+func (p *Push) parseURL(rawURI string, reqURL *url.URL, uriParser URIParser) error {
+	uri, err := URIToURL(rawURI)
 	if err != nil {
 		return err
 	}
 
-	srcURL.Path = "/" + srcURL.Path
-	// TODO: relative URLs, absolute URLs and prepending /
-	if (srcURL.Host == "" || srcURL.Host == reqURL.Host) && strings.HasPrefix(srcURL.Path, p.baseURI) {
-		if err = uriParser(srcURL.Path); err != nil {
+	if uri.Host != "" && uri.Host != reqURL.Host {
+		return nil
+	}
+	resolvedURI := reqURL.ResolveReference(uri)
+
+	if !strings.HasPrefix(rawURI, "flags/") {
+		fmt.Println("uri:", uri, " req:", reqURL, " resolve:", resolvedURI.Path)
+	}
+
+	if strings.HasPrefix(resolvedURI.Path, p.baseURI) {
+		if err = uriParser(resolvedURI.Path); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func URIToURL(uri string) (*url.URL, error) {
+	reqURL, err := url.Parse(uri)
+	if err != nil {
+		return nil, err
+	}
+
+	if strings.HasPrefix(reqURL.Path, "localhost") || strings.HasPrefix(reqURL.Path, "127.0.0.1") {
+		reqURL.Host = reqURL.Path[0:9]
+		reqURL.Path = reqURL.Path[9:]
+	}
+	return reqURL, nil
+}
+
+func URIToMimetype(uri string) (string, error) {
+	mimetype := "text/html"
+	if dot := strings.IndexByte(uri, '.'); dot > -1 {
+		mediatype := mime.TypeByExtension(uri[dot:])
+
+		var err error
+		if mimetype, _, err = mime.ParseMediaType(mediatype); err != nil {
+			return "", err
+		}
+	}
+	return mimetype, nil
+}
+
+func drainReader(r io.Reader) {
+	b := make([]byte, 1024)
+	for {
+		if _, err := r.Read(b); err != nil {
+			break
+		}
+	}
 }
