@@ -1,6 +1,6 @@
 #<a name="push"></a> Push [![GoDoc](http://godoc.org/github.com/tdewolff/push?status.svg)](http://godoc.org/github.com/tdewolff/push)
 
-Push is a package that uses HTTP2 to push resources to the client as it parses content. By parsing HTML and CSS it extracts referenced resource URIs and pushes them towards the client, which is quicker than waiting for the client to parse and request those resources.
+Push is a package that uses HTTP2 to push resources to the client as it parses content. By parsing HTML, CSS and SVG it extracts referenced resource URIs and pushes them towards the client, which is quicker than waiting for the client to parse and request those resources.
 
 ## Installation
 Run the following command
@@ -57,8 +57,9 @@ Extracts URIs from
 
 ## Usage
 ### New
+First argument is the base URI for which to serve pushes. The second argument is the resource directory to scan resources recursively, leave empty to disable.
 ``` go
-pusher := push.New()
+pusher := push.New("/", "static/")
 ```
 
 ### ResponseWriter
