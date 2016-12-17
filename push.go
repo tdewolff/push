@@ -3,7 +3,6 @@ package push
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -249,8 +248,11 @@ func (p *Push) ParseHTML(r io.Reader, reqURL *url.URL, uriParser URIParser) erro
 						}
 					} else {
 						if attr == html.Srcset {
-							// TODO
-							fmt.Println(string(attrVal))
+							for _, uri := range parseSrcset(attrVal) {
+								if err := p.parseURL(uri, reqURL, uriParser); err != nil {
+									return err
+								}
+							}
 						} else {
 							if err := p.parseURL(string(attrVal), reqURL, uriParser); err != nil {
 								return err
@@ -278,6 +280,38 @@ func (p *Push) ParseHTML(r io.Reader, reqURL *url.URL, uriParser URIParser) erro
 	}
 }
 
+func parseSrcset(b []byte) []string {
+	uris := []string{}
+	n := len(b)
+	start := 0
+	for i := 0; i < n; i++ {
+		if b[i] == ',' {
+			uris = append(uris, parseSrcsetCandidate(b[start:i]))
+			start = i + 1
+		}
+	}
+	return append(uris, parseSrcsetCandidate(b[start:]))
+}
+
+func parseSrcsetCandidate(b []byte) string {
+	n := len(b)
+	start := 0
+	for i := 0; i < n; i++ {
+		if !parse.IsWhitespace(b[i]) {
+			start = i
+			break
+		}
+	}
+	end := n
+	for i := start; i < n; i++ {
+		if parse.IsWhitespace(b[i]) {
+			end = i
+			break
+		}
+	}
+	return string(b[start:end])
+}
+
 // ParseCSS parses r as a CSS file and sends any local resource URI to uriParser. Whether a resource is local is determined by reqURL.
 func (p *Push) ParseCSS(r io.Reader, reqURL *url.URL, uriParser URIParser, isInline bool) error {
 	parser := css.NewParser(r, isInline)
@@ -296,18 +330,10 @@ func (p *Push) ParseCSS(r io.Reader, reqURL *url.URL, uriParser URIParser, isInl
 					if len(url) > 2 && (url[0] == '"' || url[0] == '\'') {
 						url = url[1 : len(url)-1]
 					}
-					if mediatype, data, err := parse.DataURI(url); err == nil {
-						semicolon := bytes.IndexByte(mediatype, ';')
-						if semicolon == -1 {
-							semicolon = len(mediatype)
+					if !bytes.HasPrefix(url, []byte("data:")) {
+						if err := p.parseURL(string(url), reqURL, uriParser); err != nil {
+							return err
 						}
-						if mimetype := string(mediatype[:semicolon]); mimetype == "image/svg+xml" {
-							if err := p.ParseSVG(buffer.NewReader(data), reqURL, uriParser); err != nil {
-								return err
-							}
-						}
-					} else if err = p.parseURL(string(url), reqURL, uriParser); err != nil {
-						return err
 					}
 				}
 			}
@@ -373,12 +399,8 @@ func (p *Push) parseURL(rawURI string, reqURL *url.URL, uriParser URIParser) err
 	if uri.Host != "" && uri.Host != reqURL.Host {
 		return nil
 	}
+
 	resolvedURI := reqURL.ResolveReference(uri)
-
-	if !strings.HasPrefix(rawURI, "flags/") {
-		fmt.Println("uri:", uri, " req:", reqURL, " resolve:", resolvedURI.Path)
-	}
-
 	if strings.HasPrefix(resolvedURI.Path, p.baseURI) {
 		if err = uriParser(resolvedURI.Path); err != nil {
 			return err

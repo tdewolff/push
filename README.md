@@ -38,7 +38,7 @@ Extracts URIs from
 
 ### CSS
 Parses
-- `url(data:image/svg+xml,...)` as SVG
+~~- `url(data:image/svg+xml,...)` as SVG~~ data URI SVGs are not allowed to load external resources
 
 Extracts URIs from
 - `url("...")`

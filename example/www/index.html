@@ -14,6 +14,20 @@
 				background-image: url("background.jpg");
 				background-size: 100% auto;
 			}
+
+			#un {
+				display:inline-block;
+				vertical-align:middle;
+			}
+
+			#eu {
+				display:inline-block;
+				width:2em;
+				height:1em;
+				vertical-align:middle;
+				background-size:auto 100%;
+				background-repeat:no-repeat;
+			}
 		</style>
 	</head>
 	<body>
@@ -23,10 +37,11 @@
 		<div id="content">
 			<h2>
 				Flag images
-				<span style="background-image:url('flag.png'); background-size:auto 100%; background-repeat:no-repeat; width:2em; height:1em; display:inline-block; vertical-align:middle;"></span>
+				<span id="un"><svg xmlns="http://www.w3.org/2000/svg" width="32px" height="32px"><image href="un.gif"/></svg></span>
+				<span id="eu" style="background-image:url('eu.png'); "></span>
 			</h2>
 			<p class="flags">
-				<img src="flags/AD.png" width="96" height="96">
+				<img src="flags/AD.png" srcset="AD_48x48.png 48w, AD_24x24.png 24w" width="96" height="96">
 				<img src="flags/AE.png" width="96" height="96">
 				<img src="flags/AF.png" width="96" height="96">
 				<img src="flags/AG.png" width="96" height="96">
