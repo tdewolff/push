@@ -3,6 +3,8 @@
 Push is a package that uses HTTP2 to push resources to the client as it parses content. By parsing HTML, CSS and SVG it extracts referenced resource URIs and pushes them towards the client, which is quicker than waiting for the client to parse and request those resources.
 
 ## Installation
+You need Go1.8 (from tip for example).
+
 Run the following command
 
 	go get github.com/tdewolff/push
