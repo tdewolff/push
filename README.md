@@ -61,14 +61,15 @@ Extracts URIs from
 ### New
 First argument is the base URI for which to serve pushes. The second argument is the resource directory to scan resources recursively, leave empty to disable.
 ``` go
-pusher := push.New("/", "static/")
+p := push.NewParser("/", "static/")
 ```
 
 ### ResponseWriter
+Wrap an existing `http.ResponseWriter` so that it pushes resources automatically:
 ``` go
 http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-	if pushWriter, err := pusher.ResponseWriter(w, r); err == nil {
-		defer pushWriter.Close()
+	if pushWriter, err := p.ResponseWriter(w, r); err == nil {
+		defer pushWriter.Close() // Close returns an error...
 		w = pushWriter
 	}
 
@@ -76,17 +77,50 @@ http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-### Reader
+### Push
+`Push` pushes resources to `pusher`. It is the underlying functionality of ResponseWriter.
 ``` go
+err := p.Push(r, "localhost", "/index.html", pusher, pushOpts)
+```
+
+### Reader
+Wrap a reader and obtain the URIs from a channel:
+``` go
+var uriChan chan string
+
 func openIndex() io.Reader {
 	r, _ := os.Open("index.html")
 
-	r = pusher.Reader(r, "/index.html", "text/html", func(uri string) error {
-		fmt.Println(uri)
-		return nil
-	})
-	return r
+	return p.Reader(r, "localhost", "/index.html", uriChan)
 }
+
+// somewhere else...
+go func() {
+	for uri := range uriChan {
+		// process uri
+	}
+}()
+
+// don't forget to close uriChan somewhere
+```
+
+### List
+`List` the resource URIs found:
+``` go
+uris, err := p.List(r, "localhost", "/index.html")
+if err != nil {
+	panic(err)
+}
+```
+
+### Parse
+`ParseAll` and `Parse` are low-level function to parse files and return the resource URIs. `ParseAll` parses recursively (if `Parser.dir` is not empty) and `Parse` parses the reader and uses a callback to return URIs:
+``` go
+err := p.ParseAll(r, "localhost", "/index.html", uriChan)
+
+err := p.Parse(r, "localhost", "/index.html", func(uri string) error {
+	// ...
+})
 ```
 
 ## Example

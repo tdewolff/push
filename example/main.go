@@ -12,12 +12,12 @@ import (
 func main() {
 	defer profile.Start(profile.CPUProfile, profile.ProfilePath(".")).Stop()
 
-	pusher := push.New("/", "www")
+	p := push.NewParser("/", "www")
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(50 * time.Millisecond)
 
-		if pushWriter, err := pusher.ResponseWriter(w, r); err == nil {
+		if pushWriter, err := p.ResponseWriter(w, r); err == nil {
 			defer func() {
 				if err := pushWriter.Close(); err != nil {
 					log.Print(err, r.RequestURI)

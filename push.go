@@ -8,19 +8,13 @@ import (
 	"sync"
 )
 
+// ErrNoPusher is returned when the ResponseWriter does not implement the Pusher interface.
 var ErrNoPusher = errors.New("ResponseWriter is not a Pusher")
+
+// ErrRecursivePush is returned when the request was initiated by a push. This is determined via the X-Pushed header.
 var ErrRecursivePush = errors.New("recursive push")
 
 ////////////////
-
-type Push struct {
-	baseURI string
-	dir     http.Dir
-}
-
-func New(baseURI string, dir http.Dir) *Push {
-	return &Push{baseURI, dir}
-}
 
 // pipedResponseWriter makes sure that all data has been written on calling Close (can be blocking).
 type pipedResponseWriter struct {
@@ -40,10 +34,10 @@ func (w *pipedResponseWriter) Close() error {
 	return w.err
 }
 
-// ResponseWriter wraps a ResponseWriter interface and pushes any resources to the client.
-// Errors are returned by Close on the writer.
-// The writer must be closed explicitly.
-func (p *Push) ResponseWriter(w http.ResponseWriter, r *http.Request) (*pipedResponseWriter, error) {
+// ResponseWriter wraps a ResponseWriter interface. It parses anything written to the returned ResponseWriter and pushes local resources to the client.
+// ResponseWriter can only return ErrNoPusher, ErrRecursivePush or ErrNoParser errors.
+// Parsing errors are returned by Close on the writer. The writer must be closed explicitly.
+func (p *Parser) ResponseWriter(w http.ResponseWriter, r *http.Request) (*pipedResponseWriter, error) {
 	pusher, ok := w.(http.Pusher)
 	if !ok {
 		return nil, ErrNoPusher
@@ -85,8 +79,8 @@ func drainReader(r io.Reader) {
 	}
 }
 
-// Push pushes any resource URIs found in r to pusher. It reads resources recursively. Whether a resource is local is determined by host + uri.
-func (p *Push) Push(r io.Reader, host, uri string, pusher http.Pusher, opts *http.PushOptions) error {
+// Push parses r recursively and pushes local resource URIs to pusher. Whether a resource is local is determined by host + uri.
+func (p *Parser) Push(r io.Reader, host, uri string, pusher http.Pusher, opts *http.PushOptions) error {
 	var parseErr error
 	uriChan := make(chan string, 5)
 	go func() {
@@ -108,8 +102,8 @@ func (p *Push) Push(r io.Reader, host, uri string, pusher http.Pusher, opts *htt
 	return err
 }
 
-// Reader reads from r and returns a reader that will send any local resource URI to uriChan. Any reads done at the returned reader will concurrently be parsed for resource URIs. It reads resources recursively. Whether a resource is local is determined by host + uri.
-func (p *Push) Reader(r io.Reader, host, uri string, uriChan chan<- string) io.Reader {
+// Reader parses r recursively and returns a reader that will send local resource URIs over uriChan. Any reads done at the returned reader will concurrently be parsed. Whether a resource is local is determined by host + uri.
+func (p *Parser) Reader(r io.Reader, host, uri string, uriChan chan<- string) io.Reader {
 	pr, pw := io.Pipe()
 	go func() {
 		r = io.TeeReader(r, pw)
