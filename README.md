@@ -106,15 +106,6 @@ func openIndex() io.Reader {
 		return nil
 	}))
 }
-
-// somewhere else...
-go func() {
-	for uri := range uriChan {
-		// process uri
-	}
-}()
-
-// don't forget to close uriChan somewhere
 ```
 
 ### List
