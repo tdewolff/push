@@ -70,7 +70,25 @@ type Parser struct {
 	wg sync.WaitGroup
 }
 
-func NewParser(lookup *Lookup, uri string) (*Parser, error) {
+func NewParser(host, baseURI string, uri string) (*Parser, error) {
+	reqURL, err := url.Parse(uri)
+	if err != nil {
+		return nil, err
+	}
+	reqURL.Host = host
+	return &Parser{NewLookup(host, baseURI), reqURL, sync.WaitGroup{}}, nil
+}
+
+func NewRecursiveParser(host, baseURI string, opener FileOpener, uri string) (*Parser, error) {
+	reqURL, err := url.Parse(uri)
+	if err != nil {
+		return nil, err
+	}
+	reqURL.Host = host
+	return &Parser{NewRecursiveLookup(host, baseURI, opener), reqURL, sync.WaitGroup{}}, nil
+}
+
+func NewParserFromLookup(lookup *Lookup, uri string) (*Parser, error) {
 	reqURL, err := url.Parse(uri)
 	if err != nil {
 		return nil, err

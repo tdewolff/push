@@ -32,7 +32,7 @@ func (p *Pusher) URI(uri string) error {
 
 ////////////////
 
-func Middleware(next http.Handler, lookup *Lookup, opts *http.PushOptions) http.Handler {
+func Middleware(lookup *Lookup, opts *http.PushOptions, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		pw, err := ResponseWriter(w, r, lookup, opts)
 		if err != nil {

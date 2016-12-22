@@ -58,29 +58,30 @@ Extracts URIs from
 - `<use href="..." xlink:href="...">`
 
 ## Usage
-### New
-First argument is the base URI for which to serve pushes. The second argument is the resource directory to scan resources recursively, leave empty to disable.
+You can use `NewLookup` (or `NewParser`) to parse a file as-is. Use `NewRecursiveLookup` (or `NewRecursiveParser`) to parse the file and also read and parse the content of all referenced URIs.
+
+### Middleware
 ``` go
-p := push.NewParser("/", "static/")
+lookup := push.NewLookup("example.com", "/") // host and base URI
+
+http.HandleFunc("/", push.Middleware(lookup, nil, func(w http.ResponseWriter, r *http.Request) {
+	// ...
+}))
 ```
 
 ### ResponseWriter
 Wrap an existing `http.ResponseWriter` so that it pushes resources automatically:
 ``` go
+lookup := push.NewLookup("example.com", "/") // host and base URI
+
 http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-	if pushWriter, err := p.ResponseWriter(w, r); err == nil {
+	if pushWriter, err := push.ResponseWriter(w, r, lookup, nil); err == nil {
 		defer pushWriter.Close() // Close returns an error...
 		w = pushWriter
 	}
 
 	// ...
-}
-```
-
-### Push
-`Push` pushes resources to `pusher`. It is the underlying functionality of `ResponseWriter`.
-``` go
-err := p.Push(r, "localhost", "/index.html", pusher, pushOpts)
+})
 ```
 
 ### Reader
@@ -91,7 +92,19 @@ var uriChan chan string
 func openIndex() io.Reader {
 	r, _ := os.Open("index.html")
 
-	return p.Reader(r, "localhost", "/index.html", uriChan)
+	parser, err := push.NewRecursiveParser("example.com", "/", push.FileOpenerFunc(func(uri string) (io.Reader, string, error) {
+		// open file for uri
+		return r, mimetype, nil
+	}), "/index.html")
+	if err != nil {
+		panic(err)
+	}
+
+	return p.Reader(r, "localhost", "/index.html", push.URIHandlerFunc(func(uri string) error {
+		// is called asynchronously when using a recursive parser
+		fmt.Println(uri)
+		return nil
+	}))
 }
 
 // somewhere else...
@@ -107,20 +120,34 @@ go func() {
 ### List
 List the resource URIs found:
 ``` go
-uris, err := p.List(r, "localhost", "/index.html")
+r, _ := os.Open("index.html")
+
+parser, err := push.NewParser("example.com", "/", "/index.html")
+if err != nil {
+	panic(err)
+}
+
+uris, err := push.List(parser, r, "text/html")
 if err != nil {
 	panic(err)
 }
 ```
 
-### Parse
-`ParseAll` and `Parse` are low-level function to parse files and return the resource URIs. `ParseAll` parses recursively (if `Parser.dir` is not empty) and returns URIs over a channel while `Parse` doesn't parse recursively and uses a callback to return URIs:
+### Push
+`Push` pushes resources to `pusher`. It is the underlying functionality of `ResponseWriter`.
 ``` go
-err := p.ParseAll(r, "localhost", "/index.html", uriChan)
+httpPusher, ok := w.(http.Pusher)
+if ok {
+	pusher := NewPusher(httpPusher, &http.PushOptions{"", http.Header{}})
 
-err := p.Parse(r, "localhost", "/index.html", func(uri string) error {
-	// ...
-})
+	parser, err := push.NewParser("example.com", "/", "index.html")
+	if err != nil {
+		panic(err)
+	}
+
+	tr := io.TeeReader(r, w)
+	err := parser.Parse(r, "text/html", pusher)
+}
 ```
 
 ## Example
