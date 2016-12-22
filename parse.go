@@ -313,7 +313,7 @@ func (p *Parser) parseURL(rawResURL string, uriHandler URIHandler) error {
 					return
 				}
 
-				childParser, err := NewParser(p.Lookup, uri)
+				childParser, err := NewParserFromLookup(p.Lookup, uri)
 				if err != nil {
 					return
 				}

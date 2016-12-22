@@ -27,7 +27,7 @@ func TestURLParser(t *testing.T) {
 
 	for _, tt := range urlParserTests {
 		uri := ""
-		parser, _ := NewParser(NewLookup(tt.host, tt.baseURI), tt.uri)
+		parser, _ := NewParser(tt.host, tt.baseURI, tt.uri)
 		parser.parseURL(tt.input, URIHandlerFunc(func(_uri string) error {
 			uri = _uri
 			return nil
@@ -72,11 +72,10 @@ func TestParsers(t *testing.T) {
 		{"image/svg+xml", `<x style="background-image: url('/res');"></x>`},
 	}
 
-	lookup := NewLookup("example.com", "/")
 	for _, tt := range parserTests {
 		r := bytes.NewBufferString(tt.input)
 
-		parser, _ := NewParser(lookup, "/request")
+		parser, _ := NewParser("example.com", "/", "/request")
 		parser.Parse(r, tt.mimetype, URIHandlerFunc(func(uri string) error {
 			test.String(t, uri, "/res")
 			return nil

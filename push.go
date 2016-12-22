@@ -88,7 +88,7 @@ func ResponseWriter(w http.ResponseWriter, r *http.Request, lookup *Lookup, opts
 	}
 
 	pusher := NewPusher(httpPusher, opts)
-	parser, err := NewParser(lookup, r.RequestURI)
+	parser, err := NewParserFromLookup(lookup, r.RequestURI)
 	if err != nil {
 		return nil, err
 	}

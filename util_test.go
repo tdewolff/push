@@ -15,8 +15,7 @@ func TestReader(t *testing.T) {
 	var r io.Reader
 	r = bytes.NewBufferString(`<img src="/res">`)
 
-	lookup := NewLookup("example.com", "/")
-	parser, _ := NewParser(lookup, "/request")
+	parser, _ := NewParser("example.com", "/", "/request")
 	r = Reader(parser, r, "text/html", URIHandlerFunc(func(uri string) error {
 		test.String(t, uri, "/res")
 		return nil
@@ -37,8 +36,7 @@ func TestListSimple(t *testing.T) {
 		</body>
 	</html>`)
 
-	lookup := NewLookup("example.com", "/")
-	parser, _ := NewParser(lookup, "/request")
+	parser, _ := NewParser("example.com", "/", "/request")
 
 	uris, _ := List(parser, r, "text/html")
 	sort.Strings(uris)
@@ -65,11 +63,10 @@ func TestListRecursive(t *testing.T) {
 		"/style.css":  {"text/css", `a { background-image: url("/background.jpg"); }`},
 		"/image.svg":  {"image/svg+xml", `<image href="/img1.jpg" xlink:href="/img2.jpg"></image>`},
 	}
-	lookup := NewRecursiveLookup("example.com", "/", FileOpenerFunc(func(uri string) (io.Reader, string, error) {
+	parser, _ := NewRecursiveParser("example.com", "/", FileOpenerFunc(func(uri string) (io.Reader, string, error) {
 		res := resources[uri]
 		return bytes.NewBufferString(res.content), res.mimetype, nil
-	}))
-	parser, _ := NewParser(lookup, "/request")
+	}), "/request")
 
 	uris, _ := List(parser, r, "text/html")
 	sort.Strings(uris)
