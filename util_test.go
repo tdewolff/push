@@ -15,16 +15,18 @@ func TestReader(t *testing.T) {
 	var r io.Reader
 	r = bytes.NewBufferString(`<img src="/res">`)
 
-	parser, _ := NewParser("example.com", "/", "/request")
-	r = Reader(parser, r, "text/html", URIHandlerFunc(func(uri string) error {
+	parser, err := NewParser("example.com/", nil, URIHandlerFunc(func(uri string) error {
 		test.String(t, uri, "/res")
 		return nil
 	}))
+	test.Error(t, err, nil)
 
-	io.Copy(ioutil.Discard, r)
+	r = Reader(parser, r, "text/html", "/request")
+	_, err = io.Copy(ioutil.Discard, r)
+	test.Error(t, err, nil)
 }
 
-func TestListSimple(t *testing.T) {
+func TestList(t *testing.T) {
 	r := bytes.NewBufferString(`
 	<html>
 		<head>
@@ -36,39 +38,9 @@ func TestListSimple(t *testing.T) {
 		</body>
 	</html>`)
 
-	parser, _ := NewParser("example.com", "/", "/request")
+	uris, err := List("example.com/", nil, r, "text/html", "/request")
+	test.Error(t, err, nil)
 
-	uris, _ := List(parser, r, "text/html")
 	sort.Strings(uris)
 	test.String(t, strings.Join(uris, ","), "/frame.html,/image.svg,/style.css")
-}
-
-func TestListRecursive(t *testing.T) {
-	r := bytes.NewBufferString(`
-	<html>
-		<head>
-			<link rel="stylesheet" href="/style.css">
-		</head>
-		<body>
-			<img src="/image.svg">
-			<iframe src="/frame.html"></iframe>
-		</body>
-	</html>`)
-
-	resources := map[string]struct {
-		mimetype string
-		content  string
-	}{
-		"/frame.html": {"text/html", `<img src="/header.jpg">`},
-		"/style.css":  {"text/css", `a { background-image: url("/background.jpg"); }`},
-		"/image.svg":  {"image/svg+xml", `<image href="/img1.jpg" xlink:href="/img2.jpg"></image>`},
-	}
-	parser, _ := NewRecursiveParser("example.com", "/", FileOpenerFunc(func(uri string) (io.Reader, string, error) {
-		res := resources[uri]
-		return bytes.NewBufferString(res.content), res.mimetype, nil
-	}), "/request")
-
-	uris, _ := List(parser, r, "text/html")
-	sort.Strings(uris)
-	test.String(t, strings.Join(uris, ","), "/background.jpg,/frame.html,/header.jpg,/image.svg,/img1.jpg,/img2.jpg,/style.css")
 }

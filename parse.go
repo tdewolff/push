@@ -19,101 +19,62 @@ import (
 // ErrNoParser is returned when the mimetype has no parser specified.
 var ErrNoParser = errors.New("mimetype has no parser")
 
-// URIHandler is a callback definition that is called when a resource URI is found.
-type URIHandler interface {
-	URI(string) error
-}
-
-type URIHandlerFunc func(string) error
-
-func (f URIHandlerFunc) URI(uri string) error {
-	return f(uri)
-}
-
-type FileOpener interface {
-	Open(string) (io.Reader, string, error)
-}
-
-type FileOpenerFunc func(string) (io.Reader, string, error)
-
-func (f FileOpenerFunc) Open(uri string) (io.Reader, string, error) {
-	return f(uri)
-}
-
 ////////////////
 
-type Lookup struct {
-	host    string
-	baseURI string
-	opener  FileOpener
-}
-
-// NewParser returns a new Parser.
-// baseURI defines the prefix an URI must have to be considered as a local resource.
-// dir defines a path where to find these resources, so it can read, parse and push them to the client. Leave dir empty to disable recursive parsing.
-func NewLookup(host, baseURI string) *Lookup {
-	return &Lookup{host, baseURI, nil}
-}
-
-func NewRecursiveLookup(host, baseURI string, opener FileOpener) *Lookup {
-	return &Lookup{host, baseURI, opener}
-}
-
-func (l *Lookup) IsRecursive() bool {
-	return l.opener != nil
-}
-
+// Parser parses resources and calls uriHandler for all found URIs.
 type Parser struct {
-	*Lookup
-	reqURL *url.URL
+	baseURL    *url.URL
+	uriHandler URIHandler
 
-	wg sync.WaitGroup
+	// recursive
+	opener FileOpener
+	wg     sync.WaitGroup
 }
 
-func NewParser(host, baseURI string, uri string) (*Parser, error) {
-	reqURL, err := url.Parse(uri)
+// NewParser returns a new Parser. rawBaseURL defines the prefix an URL must have to be considered a local resource. If FileOpener is not nil, it will read and parse the referenced URIs recursively.
+func NewParser(rawBaseURL string, opener FileOpener, uriHandler URIHandler) (*Parser, error) {
+	if !strings.Contains(rawBaseURL, "//") && rawBaseURL != "" && rawBaseURL[0] != '/' {
+		rawBaseURL = "//" + rawBaseURL
+	}
+	baseURL, err := url.Parse(rawBaseURL)
 	if err != nil {
 		return nil, err
 	}
-	reqURL.Host = host
-	return &Parser{NewLookup(host, baseURI), reqURL, sync.WaitGroup{}}, nil
+	return &Parser{baseURL, uriHandler, opener, sync.WaitGroup{}}, nil
 }
 
-func NewRecursiveParser(host, baseURI string, opener FileOpener, uri string) (*Parser, error) {
+// IsRecursive returns true when the URIs within documents are aso read and parsed.
+func (p *Parser) IsRecursive() bool {
+	return p.opener != nil
+}
+
+// Parse parses r with mimetype and served by uri. When Parser is recursive, it will be blocking until all resources are parsed.
+func (p *Parser) Parse(r io.Reader, mimetype, uri string) error {
+	if p.IsRecursive() {
+		defer p.wg.Wait()
+	}
+	return p.parse(r, mimetype, uri)
+}
+
+func (p *Parser) parse(r io.Reader, mimetype, uri string) error {
 	reqURL, err := url.Parse(uri)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	reqURL.Host = host
-	return &Parser{NewRecursiveLookup(host, baseURI, opener), reqURL, sync.WaitGroup{}}, nil
-}
 
-func NewParserFromLookup(lookup *Lookup, uri string) (*Parser, error) {
-	reqURL, err := url.Parse(uri)
-	if err != nil {
-		return nil, err
-	}
-	reqURL.Host = lookup.host
-	return &Parser{lookup, reqURL, sync.WaitGroup{}}, nil
-}
-
-// Parse parses r and calls uriParser when a local resource URI is found. Whether a resource is local is determined by host + uri.
-func (p *Parser) Parse(r io.Reader, mimetype string, uriHandler URIHandler) error {
-	defer p.wg.Wait()
 	if mimetype == "text/html" {
-		return p.parseHTML(r, uriHandler)
+		return p.parseHTML(r, reqURL)
 	} else if mimetype == "text/css" {
-		return p.parseCSS(r, uriHandler, false)
+		return p.parseCSS(r, reqURL, false)
 	} else if mimetype == "image/svg+xml" {
-		return p.parseSVG(r, uriHandler)
+		return p.parseSVG(r, reqURL)
 	}
 	return ErrNoParser
 }
 
 ////////////////
 
-// parseHTML parses r as an HTML file and sends any local resource URI to uriParser.
-func (p *Parser) parseHTML(r io.Reader, uriHandler URIHandler) error {
+func (p *Parser) parseHTML(r io.Reader, reqURL *url.URL) error {
 	var tag html.Hash
 
 	lexer := html.NewLexer(r)
@@ -140,18 +101,18 @@ func (p *Parser) parseHTML(r io.Reader, uriHandler URIHandler) error {
 					}
 
 					if attr == html.Style {
-						if err := p.parseCSS(buffer.NewReader(attrVal), uriHandler, true); err != nil {
+						if err := p.parseCSS(buffer.NewReader(attrVal), reqURL, true); err != nil {
 							return err
 						}
 					} else {
 						if attr == html.Srcset {
 							for _, uri := range parseSrcset(attrVal) {
-								if err := p.parseURL(uri, uriHandler); err != nil {
+								if err := p.parseURL(uri, reqURL); err != nil {
 									return err
 								}
 							}
 						} else {
-							if err := p.parseURL(string(attrVal), uriHandler); err != nil {
+							if err := p.parseURL(string(attrVal), reqURL); err != nil {
 								return err
 							}
 						}
@@ -159,16 +120,16 @@ func (p *Parser) parseHTML(r io.Reader, uriHandler URIHandler) error {
 				}
 			}
 		case html.SvgToken:
-			if err := p.parseSVG(buffer.NewReader(data), uriHandler); err != nil {
+			if err := p.parseSVG(buffer.NewReader(data), reqURL); err != nil {
 				return err
 			}
 		case html.TextToken:
 			if tag == html.Style {
-				if err := p.parseCSS(buffer.NewReader(data), uriHandler, false); err != nil {
+				if err := p.parseCSS(buffer.NewReader(data), reqURL, false); err != nil {
 					return err
 				}
 			} else if tag == html.Iframe {
-				if err := p.parseHTML(buffer.NewReader(data), uriHandler); err != nil {
+				if err := p.parseHTML(buffer.NewReader(data), reqURL); err != nil {
 					return err
 				}
 			}
@@ -209,8 +170,7 @@ func parseSrcsetCandidate(b []byte) string {
 	return string(b[start:end])
 }
 
-// parseCSS parses r as a CSS file and sends any local resource URI to uriParser.
-func (p *Parser) parseCSS(r io.Reader, uriHandler URIHandler, isInline bool) error {
+func (p *Parser) parseCSS(r io.Reader, reqURL *url.URL, isInline bool) error {
 	parser := css.NewParser(r, isInline)
 	for {
 		gt, _, _ := parser.Next()
@@ -228,7 +188,7 @@ func (p *Parser) parseCSS(r io.Reader, uriHandler URIHandler, isInline bool) err
 						url = url[1 : len(url)-1]
 					}
 					if !bytes.HasPrefix(url, []byte("data:")) {
-						if err := p.parseURL(string(url), uriHandler); err != nil {
+						if err := p.parseURL(string(url), reqURL); err != nil {
 							return err
 						}
 					}
@@ -238,8 +198,7 @@ func (p *Parser) parseCSS(r io.Reader, uriHandler URIHandler, isInline bool) err
 	}
 }
 
-// parseSVG parses r as an SVG file and sends any local resource URI to uriParser.
-func (p *Parser) parseSVG(r io.Reader, uriHandler URIHandler) error {
+func (p *Parser) parseSVG(r io.Reader, reqURL *url.URL) error {
 	var tag svg.Hash
 
 	lexer := xml.NewLexer(r)
@@ -266,11 +225,11 @@ func (p *Parser) parseSVG(r io.Reader, uriHandler URIHandler) error {
 					}
 
 					if attr == svg.Style {
-						if err := p.parseCSS(buffer.NewReader(attrVal), uriHandler, true); err != nil {
+						if err := p.parseCSS(buffer.NewReader(attrVal), reqURL, true); err != nil {
 							return err
 						}
 					} else {
-						if err := p.parseURL(string(attrVal), uriHandler); err != nil {
+						if err := p.parseURL(string(attrVal), reqURL); err != nil {
 							return err
 						}
 					}
@@ -278,7 +237,7 @@ func (p *Parser) parseSVG(r io.Reader, uriHandler URIHandler) error {
 			}
 		case xml.TextToken:
 			if tag == svg.Style {
-				if err := p.parseCSS(buffer.NewReader(data), uriHandler, false); err != nil {
+				if err := p.parseCSS(buffer.NewReader(data), reqURL, false); err != nil {
 					return err
 				}
 			}
@@ -287,23 +246,20 @@ func (p *Parser) parseSVG(r io.Reader, uriHandler URIHandler) error {
 	}
 }
 
-func (p *Parser) parseURL(rawResURL string, uriHandler URIHandler) error {
+func (p *Parser) parseURL(rawResURL string, reqURL *url.URL) error {
 	resURL, err := url.Parse(rawResURL)
 	if err != nil {
 		return err
 	}
 
-	if resURL.Host != "" && resURL.Host != p.reqURL.Host {
+	if resURL.Host != "" && p.baseURL.Host != "" && resURL.Host != p.baseURL.Host {
 		return nil
 	}
 
-	resolvedURI := p.reqURL.ResolveReference(resURL)
-	if strings.HasPrefix(resolvedURI.Path, p.baseURI) {
+	resolvedURI := reqURL.ResolveReference(resURL)
+	if strings.HasPrefix(resolvedURI.Path, p.baseURL.Path) {
 		uri := resolvedURI.Path
-		uriHandler.URI(uri)
 		if p.IsRecursive() {
-			// recursively read and parse the referenced URIs
-			// does not block the current parser
 			p.wg.Add(1)
 			go func() {
 				defer p.wg.Done()
@@ -313,15 +269,13 @@ func (p *Parser) parseURL(rawResURL string, uriHandler URIHandler) error {
 					return
 				}
 
-				childParser, err := NewParserFromLookup(p.Lookup, uri)
-				if err != nil {
-					return
-				}
-
-				if err := childParser.Parse(r, mimetype, uriHandler); err != nil {
+				if err := p.parse(r, mimetype, uri); err != nil {
 					return
 				}
 			}()
+		}
+		if err = p.uriHandler.URI(uri); err != nil {
+			return err
 		}
 	}
 	return nil

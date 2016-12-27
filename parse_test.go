@@ -2,6 +2,7 @@ package push
 
 import (
 	"bytes"
+	"net/url"
 	"testing"
 
 	"github.com/tdewolff/test"
@@ -9,30 +10,40 @@ import (
 
 func TestURLParser(t *testing.T) {
 	urlParserTests := []struct {
-		host     string
-		baseURI  string
+		baseURL  string
 		uri      string
 		input    string
 		expected string
 	}{
-		{"example.com", "/", "/index.html", "http://example.com/header.jpg", "/header.jpg"},
-		{"example.com", "/", "/index.html", "//example.com/header.jpg", "/header.jpg"},
-		{"example.com", "/", "/index.html", "/header.jpg", "/header.jpg"},
-		{"example.com", "/", "/index.html", "header.jpg", "/header.jpg"},
-		{"www.example.com", "/", "/index.html", "http://example.com/header.jpg", ""},
-		{"example.com", "/dir/", "/index.html", "http://example.com/header.jpg", ""},
-		{"example.com", "/", "/dir/index.html", "http://example.com/header.jpg", "/header.jpg"},
-		{"example.com", "/", "/dir/index.html", "header.jpg", "/dir/header.jpg"},
+		{"example.com/", "/index.html", "http://example.com/header.jpg", "/header.jpg"},
+		{"example.com/", "/index.html", "//example.com/header.jpg", "/header.jpg"},
+		{"example.com/", "/index.html", "/header.jpg", "/header.jpg"},
+		{"example.com/", "/index.html", "header.jpg", "/header.jpg"},
+		{"example.com", "/index.html", "header.jpg", "/header.jpg"},
+		{"www.example.com/", "/index.html", "http://example.com/header.jpg", ""},
+		{"example.com/dir/", "/index.html", "http://example.com/header.jpg", ""},
+		{"example.com/", "/dir/index.html", "http://example.com/header.jpg", "/header.jpg"},
+		{"example.com/", "/dir/index.html", "header.jpg", "/dir/header.jpg"},
+		{"/", "/index.html", "header.jpg", "/header.jpg"},
+		{"/dir/", "/index.html", "header.jpg", ""},
+		{"/dir/", "/dir/index.html", "header.jpg", "/dir/header.jpg"},
+		{"", "/index.html", "header.jpg", "/header.jpg"},
 	}
 
 	for _, tt := range urlParserTests {
 		uri := ""
-		parser, _ := NewParser(tt.host, tt.baseURI, tt.uri)
-		parser.parseURL(tt.input, URIHandlerFunc(func(_uri string) error {
+		parser, err := NewParser(tt.baseURL, nil, URIHandlerFunc(func(_uri string) error {
 			uri = _uri
 			return nil
 		}))
-		test.String(t, uri, tt.expected, tt.host, tt.baseURI, tt.uri)
+		test.Error(t, err, nil)
+
+		reqURL, err := url.Parse(tt.uri)
+		test.Error(t, err, nil)
+
+		err = parser.parseURL(tt.input, reqURL)
+		test.Error(t, err, nil)
+		test.String(t, uri, tt.expected, tt.baseURL, tt.uri)
 	}
 }
 
@@ -75,10 +86,13 @@ func TestParsers(t *testing.T) {
 	for _, tt := range parserTests {
 		r := bytes.NewBufferString(tt.input)
 
-		parser, _ := NewParser("example.com", "/", "/request")
-		parser.Parse(r, tt.mimetype, URIHandlerFunc(func(uri string) error {
+		parser, err := NewParser("example.com/", nil, URIHandlerFunc(func(uri string) error {
 			test.String(t, uri, "/res")
 			return nil
 		}))
+		test.Error(t, err, nil)
+
+		err = parser.Parse(r, tt.mimetype, "/request")
+		test.Error(t, err, nil)
 	}
 }
