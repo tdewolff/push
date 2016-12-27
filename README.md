@@ -60,6 +60,8 @@ Extracts URIs from
 ## Usage
 ### Middleware
 ``` go
+fileOpener := push.DefaultFileOpener("resources/")
+cache := push.DefaultCache()
 http.HandleFunc("/", push.Middleware("example.com/", fileOpener, cache, func(w http.ResponseWriter, r *http.Request) {
 	// ...
 }))
@@ -70,6 +72,8 @@ Pass `nil` for `fileOpener` and `cache` to disable recursive parsing and URI cac
 ### ResponseWriter
 Wrap an existing `http.ResponseWriter` so that it pushes resources automatically:
 ``` go
+fileOpener := push.DefaultFileOpener("resources/")
+cache := push.DefaultCache()
 http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 	if pushWriter, err := push.ResponseWriter(w, r, "example.com/", fileOpener, cache); err == nil {
 		defer pushWriter.Close() // Close returns an error...
