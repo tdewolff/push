@@ -21,7 +21,7 @@ func TestReader(t *testing.T) {
 	}))
 	test.Error(t, err, nil)
 
-	r = Reader(parser, r, "text/html", "/request")
+	r = Reader(r, parser, "text/html", "/request")
 	_, err = io.Copy(ioutil.Discard, r)
 	test.Error(t, err, nil)
 }
