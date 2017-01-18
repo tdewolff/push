@@ -62,7 +62,8 @@ Extracts URIs from
 ``` go
 fileOpener := push.DefaultFileOpener("resources/")
 cache := push.DefaultCache()
-http.HandleFunc("/", push.Middleware("example.com/", fileOpener, cache, func(w http.ResponseWriter, r *http.Request) {
+p := push.New("example.com/", fileOpener, cache)
+http.HandleFunc("/", p.Middleware(func(w http.ResponseWriter, r *http.Request) {
 	// ...
 }))
 ```
@@ -74,8 +75,9 @@ Wrap an existing `http.ResponseWriter` so that it pushes resources automatically
 ``` go
 fileOpener := push.DefaultFileOpener("resources/")
 cache := push.DefaultCache()
+p := push.New("example.com/", fileOpener, cache)
 http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-	if pushWriter, err := push.ResponseWriter(w, r, "example.com/", fileOpener, cache); err == nil {
+	if pushWriter, err := p.ResponseWriter(w, r); err == nil {
 		defer pushWriter.Close() // Close returns an error...
 		w = pushWriter
 	}
@@ -102,7 +104,7 @@ func openIndex() io.Reader {
 	})
 	parser := push.NewParser("example.com/", fileOpener, uriHandler)
 
-	return p.Reader(parser, r, "text/html", "/index.html")
+	return p.Reader(r, parser, "text/html", "/index.html")
 }
 ```
 

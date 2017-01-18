@@ -4,7 +4,6 @@ import (
 	"log"
 	"net/http"
 	"path"
-	"time"
 
 	"github.com/pkg/profile"
 	"github.com/tdewolff/push"
@@ -15,9 +14,10 @@ func main() {
 
 	fileOpener := push.NewDefaultFileOpener("www")
 	cache := push.NewDefaultCache()
+	p := push.New("example.com/", fileOpener, cache)
 
-	http.Handle("/", push.Middleware("example.com/", fileOpener, cache, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(50 * time.Millisecond)
+	http.Handle("/", p.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		//time.Sleep(50 * time.Millisecond)
 		http.ServeFile(w, r, path.Join("www", r.URL.Path))
 	})))
 
